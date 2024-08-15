@@ -1,13 +1,9 @@
-/*
-*
-TODO:
-- have to evaluate when it starts with '/:' such case is when there is only one first path
-- have to be able to resolve /:var1/:var2 current behaviour stack overflow
-*
-*/
 package router
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 type Tree[T any] struct {
 	root *Node[T]
@@ -16,6 +12,7 @@ type Tree[T any] struct {
 type Node[T any] struct {
 	prefix   string
 	children []*Node[T]
+	value    T
 }
 
 func NewTree[T any]() *Tree[T] {
@@ -24,26 +21,27 @@ func NewTree[T any]() *Tree[T] {
 	}
 }
 
-func (tree *Tree[T]) Insert(word string) {
-	tree.insertNode(tree.root, word)
+func (tree *Tree[T]) Insert(word string, value T) {
+	tree.insertNode(tree.root, word, value)
 }
 
-func (tree *Tree[T]) insertNode(node *Node[T], word string) {
+func (tree *Tree[T]) insertNode(node *Node[T], word string, value T) {
 	for _, child := range node.children {
 		commonPrefix := tree.getCommonPrefix(child.prefix, word)
 		if len(commonPrefix) > 0 {
 			if commonPrefix == child.prefix {
-				tree.insertNode(child, word[len(commonPrefix):])
+				tree.insertNode(child, word[len(commonPrefix):], value)
 			} else {
 				newNode := &Node[T]{
 					prefix:   commonPrefix,
 					children: []*Node[T]{child},
+					value:    value,
 				}
 
 				child.prefix = child.prefix[len(commonPrefix):]
 				node.children = append(node.children, newNode)
 				node.children = tree.removeNode(node.children, child)
-				tree.insertNode(newNode, word[len(commonPrefix):])
+				tree.insertNode(newNode, word[len(commonPrefix):], value)
 			}
 
 			return
@@ -53,6 +51,7 @@ func (tree *Tree[T]) insertNode(node *Node[T], word string) {
 	// no common prefix, create a new child
 	newNode := &Node[T]{
 		prefix: word,
+		value:  value,
 	}
 	node.children = append(node.children, newNode)
 }
@@ -93,27 +92,45 @@ func (tree *Tree[T]) searchNode(node *Node[T], word string) *Node[T] {
 	}
 
 	for _, child := range node.children {
+		// static path
 		if strings.HasPrefix(word, child.prefix) {
 			return tree.searchNode(child, word[len(child.prefix):])
 		}
 
-		if strings.HasPrefix(child.prefix, ":") {
-			nextPath := strings.Index(word, "/")
-			if nextPath == -1 {
-				return child
-			} else {
-				prefix := ""
-				val := strings.Index(child.prefix, "/")
-				if val == -1 {
-					prefix = child.prefix
-				} else {
-					prefix = child.prefix[:val]
+		// dynamic path
+		if strings.Contains(child.prefix, ":") {
+			pattern, err := regexp.Compile("^[a-zA-Z0-9]+$")
+			if err != nil {
+				panic("invalid regexp")
+			}
+
+			varStart, varEnd := 0, 0
+			replace := word
+			for i := 0; i < len(child.prefix); i++ {
+				letter := child.prefix[i]
+				if letter == ':' {
+					varStart = i
+					continue
 				}
 
-				return tree.searchNode(node, prefix+word[nextPath:])
+				if !pattern.MatchString(string(letter)) || i == len(child.prefix)-1 || i == '/' {
+					varEnd = strings.Index(word, string(letter))
+					if varEnd < 0 {
+						return nil
+					}
+
+					replace = strings.Replace(word, replace[varStart:varEnd], child.prefix[varStart:i], 1)
+					varStart, varEnd = 0, 0
+				}
 			}
+
+			return tree.searchNode(child, replace)
 		}
 	}
 
 	return nil
+}
+
+func (node *Node[T]) GetValue() T {
+	return node.value
 }
